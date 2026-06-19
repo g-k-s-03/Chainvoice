@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { ChainvoiceABI } from "@/contractsABI/ChainvoiceABI";
 import { BrowserProvider, Contract, ethers } from "ethers";
 import { useState, useEffect } from "react";
-import { useWalletClient } from "wagmi";
+import { useWalletClient, useAccount } from "wagmi";
 import {
   Loader2,
   Shield,
@@ -21,6 +21,7 @@ const Treasure = () => {
   const [treasureAmount, setTreasureAmount] = useState(0);
   const [fee, setFee] = useState(0);
   const { data: walletClient } = useWalletClient();
+  const { chainId } = useAccount();
   const [loading, setLoading] = useState({
     fetch: false,
     setAddress: false,

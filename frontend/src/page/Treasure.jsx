@@ -35,6 +35,9 @@ const Treasure = () => {
   useEffect(() => {
     const fetchTreasureAmount = async () => {
       try {
+        if (!chainId) {
+          throw new Error("Missing chainId: wallet connected but chain not configured");
+        }
         if (!walletClient) return;
         setLoading((prev) => ({ ...prev, fetch: true }));
         const provider = new BrowserProvider(walletClient);
@@ -72,6 +75,9 @@ const Treasure = () => {
       return;
     }
     try {
+      if (!chainId) {
+        throw new Error("Missing chainId: wallet connected but chain not configured");
+      }
       if (!walletClient) return;
       setLoading((prev) => ({ ...prev, setAddress: true }));
       const provider = new BrowserProvider(walletClient);
@@ -100,6 +106,9 @@ const Treasure = () => {
 
   const handleWithdrawCollection = async () => {
     try {
+      if (!chainId) {
+        throw new Error("Missing chainId: wallet connected but chain not configured");
+      }
       if (!walletClient) return;
       setLoading((prev) => ({ ...prev, withdraw: true }));
       const provider = new BrowserProvider(walletClient);
@@ -132,6 +141,9 @@ const Treasure = () => {
       return;
     }
     try {
+      if (!chainId) {
+        throw new Error("Missing chainId: wallet connected but chain not configured");
+      }
       if (!walletClient) return;
       setLoading((prev) => ({ ...prev, feeUpdate: true }));
       const provider = new BrowserProvider(walletClient);

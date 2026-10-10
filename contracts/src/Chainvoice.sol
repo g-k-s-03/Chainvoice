@@ -36,7 +36,6 @@ contract Chainvoice {
     error NativeTransferFailed();
     error FeeMustBeNative();
     error TokenAmountShortfall();
-    error TreasuryNotSet();
     error NoFeesAvailable();
     error WithdrawFailed();
     error InvalidPublicKey();
@@ -44,10 +43,6 @@ contract Chainvoice {
     error InvalidPageLimit();
 
     // ========== Storage ==========
-    error InvalidNewOwner();
-    error OwnershipNotPending();
-
-    // Storage
     struct InvoiceDetails {
         uint256 id;
         address from;
@@ -66,11 +61,11 @@ contract Chainvoice {
     // ========== Messaging Public Key Registry ==========
     mapping(address => bytes) private messagingPublicKeys;
 
-    address public owner;
-    address public treasuryAddress;
+    /// @notice Receives withdrawn fees and is the only address that may change
+    ///         the fee or hand the role to a new address. There is no owner.
+    address public feeAddress;
     uint256 public fee;                // native fee per invoice
     uint256 public accumulatedFees;    // native fees accrued (for withdraw)
-    address public pendingOwner;  // Two-step ownership transfer
 
     // ========== Events ==========
     event InvoiceCreated(uint256 indexed id, address indexed from, address indexed to, address tokenAddress);
@@ -80,21 +75,22 @@ contract Chainvoice {
     event InvoiceBatchPaid(address indexed payer, address indexed token, uint256 count, uint256 totalAmount, uint256[] ids);
     event PublicKeyRegistered(address indexed user, bytes publicKey);
 
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event OwnershipTransferInitiated(address indexed currentOwner, address indexed pendingOwner);
-    event OwnershipTransferCancelled(address indexed owner, address indexed cancelledPendingOwner);
     event FeeUpdated(uint256 indexed previousFee, uint256 indexed newFee);
-    event TreasuryAddressUpdated(address indexed previousTreasury, address indexed newTreasury);
+    event FeeAddressUpdated(address indexed previousFeeAddress, address indexed newFeeAddress);
 
-    // Constructor
-    constructor() {
-        owner = msg.sender;
-        fee = 0.0005 ether;
+    /// @param _fee Native fee charged per paid invoice.
+    /// @param _feeAddress Receives withdrawn fees and controls fee settings; must not be zero.
+    constructor(uint256 _fee, address _feeAddress) {
+        if (_feeAddress == address(0)) revert ZeroAddress();
+        fee = _fee;
+        feeAddress = _feeAddress;
+        emit FeeUpdated(0, _fee);
+        emit FeeAddressUpdated(address(0), _feeAddress);
     }
 
     // ========== Modifiers ==========
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert Unauthorized();
+    modifier onlyFeeAddress() {
+        if (msg.sender != feeAddress) revert Unauthorized();
         _;
     }
 
@@ -459,60 +455,29 @@ contract Chainvoice {
         return invoices[invoiceId];
     }
 
-    // ========== Admin - Ownership ==========
-    /// @dev Initiates a two-step ownership transfer process
-    /// @param newOwner Address of the new owner (must not be zero address)
-    function initiateOwnershipTransfer(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidNewOwner();
-        if (newOwner == owner) revert InvalidNewOwner();
-        
-        pendingOwner = newOwner;
-        emit OwnershipTransferInitiated(owner, newOwner);
-    }
-
-    /// @dev Completes the ownership transfer process
-    /// @dev Only the pending owner can call this function
-    function acceptOwnership() external {
-        if (msg.sender != pendingOwner) revert OwnershipNotPending();
-        
-        address previousOwner = owner;
-        owner = msg.sender;
-        pendingOwner = address(0);
-        
-        emit OwnershipTransferred(previousOwner, msg.sender);
-    }
-
-    /// @dev Cancels the pending ownership transfer
-    function cancelOwnershipTransfer() external onlyOwner {
-        if (pendingOwner == address(0)) revert OwnershipNotPending();
-
-        emit OwnershipTransferCancelled(msg.sender, pendingOwner);
-        pendingOwner = address(0);
-    }
-
-    // ========== Admin - Fee Management ==========
-    function setFeeAmount(uint256 _fee) external onlyOwner {
+    // ========== Fee Management ==========
+    function setFeeAmount(uint256 _fee) external onlyFeeAddress {
         emit FeeUpdated(fee, _fee);
         fee = _fee;
     }
 
-    function setTreasuryAddress(address newTreasury) external onlyOwner {
-        if (newTreasury == address(0)) revert ZeroAddress();
+    /// @notice Hand the fee role (and the fee destination) to a new address.
+    function setFeeAddress(address newFeeAddress) external onlyFeeAddress {
+        if (newFeeAddress == address(0)) revert ZeroAddress();
 
-        emit TreasuryAddressUpdated(treasuryAddress, newTreasury);
-        treasuryAddress = newTreasury;
+        emit FeeAddressUpdated(feeAddress, newFeeAddress);
+        feeAddress = newFeeAddress;
     }
 
     function withdrawFees() external {
-        if (treasuryAddress == address(0)) revert TreasuryNotSet();
         if (accumulatedFees == 0) revert NoFeesAvailable();
 
         uint256 amount = accumulatedFees;
         accumulatedFees = 0;
 
-        // Destination is the owner-set treasury, so a permissionless trigger is safe.
+        // Destination is always feeAddress, so a permissionless trigger is safe.
         // slither-disable-next-line arbitrary-send-eth
-        (bool success, ) = payable(treasuryAddress).call{value: amount}("");
+        (bool success, ) = payable(feeAddress).call{value: amount}("");
         if (!success) revert WithdrawFailed();
     }
 }

@@ -193,8 +193,14 @@ contract ChainvoiceTest is Test {
 
     event PublicKeyRegistered(address indexed user, bytes publicKey);
 
+    address feeAddr = address(0xFEE);
+    uint256 constant INITIAL_FEE = 0.0005 ether;
+
+    event FeeUpdated(uint256 indexed previousFee, uint256 indexed newFee);
+    event FeeAddressUpdated(address indexed previousFeeAddress, address indexed newFeeAddress);
+
     function setUp() public {
-        chainvoice = new Chainvoice();
+        chainvoice = new Chainvoice(INITIAL_FEE, feeAddr);
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
         vm.deal(charlie, 100 ether);
@@ -417,10 +423,6 @@ contract ChainvoiceTest is Test {
     /* ------------------------------------------------------------ */
 
     function testWithdrawFees() public {
-        address treasury = address(0x999);
-
-        chainvoice.setTreasuryAddress(treasury);
-
         vm.prank(alice);
         chainvoice.createInvoice(bob, 1 ether, address(0), keccak256("withdraw"));
 
@@ -433,77 +435,103 @@ contract ChainvoiceTest is Test {
         chainvoice.withdrawFees();
 
         assertEq(chainvoice.accumulatedFees(), 0);
-        assertEq(treasury.balance, fee);
+        assertEq(feeAddr.balance, fee);
     }
 
-    /*                    OWNERSHIP MANAGEMENT                      */
+    function testWithdrawFees_AnyoneCanTriggerButFeeAddressIsPaid() public {
+        vm.prank(alice);
+        chainvoice.createInvoice(bob, 1 ether, address(0), keccak256("withdraw2"));
+        vm.prank(bob);
+        chainvoice.payInvoice{value: 1 ether + INITIAL_FEE}(0);
+
+        uint256 charlieBefore = charlie.balance;
+        vm.prank(charlie);
+        chainvoice.withdrawFees();
+
+        assertEq(feeAddr.balance, INITIAL_FEE);
+        assertEq(charlie.balance, charlieBefore);
+    }
+
+    function testWithdrawFees_FollowsFeeAddressChange() public {
+        address newFeeAddr = address(0xBEEF);
+        vm.prank(alice);
+        chainvoice.createInvoice(bob, 1 ether, address(0), keccak256("withdraw3"));
+        vm.prank(bob);
+        chainvoice.payInvoice{value: 1 ether + INITIAL_FEE}(0);
+
+        vm.prank(feeAddr);
+        chainvoice.setFeeAddress(newFeeAddr);
+        chainvoice.withdrawFees();
+
+        assertEq(newFeeAddr.balance, INITIAL_FEE);
+        assertEq(feeAddr.balance, 0);
+    }
+
+    /*                  FEE ADDRESS CONTROL                         */
     /* ------------------------------------------------------------ */
 
-    function testInitiateOwnershipTransfer() public {
-        address newOwner = address(0xC0FFEE);
-        
-        vm.prank(alice); // alice is not the owner
-        vm.expectRevert(Chainvoice.Unauthorized.selector);
-        chainvoice.initiateOwnershipTransfer(newOwner);
-
-        vm.prank(address(this)); // this is the owner (from setUp)
-        chainvoice.initiateOwnershipTransfer(newOwner);
-        
-        assertEq(chainvoice.pendingOwner(), newOwner);
+    function testConstructor_SetsFeeAndFeeAddress() public {
+        Chainvoice c = new Chainvoice(0.002 ether, address(0xABCD));
+        assertEq(c.fee(), 0.002 ether);
+        assertEq(c.feeAddress(), address(0xABCD));
     }
 
-    function testInitiateOwnershipTransferInvalidAddress() public {
-        vm.expectRevert(Chainvoice.InvalidNewOwner.selector);
-        chainvoice.initiateOwnershipTransfer(address(0));
-
-        // Try to transfer to self
-        vm.expectRevert(Chainvoice.InvalidNewOwner.selector);
-        chainvoice.initiateOwnershipTransfer(address(this));
+    function testConstructor_EmitsInitialEvents() public {
+        vm.expectEmit(true, true, false, false);
+        emit FeeUpdated(0, 0.002 ether);
+        vm.expectEmit(true, true, false, false);
+        emit FeeAddressUpdated(address(0), address(0xABCD));
+        new Chainvoice(0.002 ether, address(0xABCD));
     }
 
-    function testAcceptOwnership() public {
-        address newOwner = address(0xC0FFEE);
-        
-        chainvoice.initiateOwnershipTransfer(newOwner);
-        
-        vm.prank(newOwner);
-        chainvoice.acceptOwnership();
-        
-        assertEq(chainvoice.owner(), newOwner);
-        assertEq(chainvoice.pendingOwner(), address(0));
+    function testConstructor_AllowsZeroFee() public {
+        Chainvoice c = new Chainvoice(0, address(0xABCD));
+        assertEq(c.fee(), 0);
     }
 
-    function testAcceptOwnershipNotPending() public {
-        vm.prank(address(0xDEADBEEF));
-        vm.expectRevert(Chainvoice.OwnershipNotPending.selector);
-        chainvoice.acceptOwnership();
+    function testConstructor_RevertIfZeroFeeAddress() public {
+        vm.expectRevert(Chainvoice.ZeroAddress.selector);
+        new Chainvoice(INITIAL_FEE, address(0));
     }
 
-    function testCancelOwnershipTransfer() public {
-        address newOwner = address(0xC0FFEE);
-        
-        chainvoice.initiateOwnershipTransfer(newOwner);
-        assertEq(chainvoice.pendingOwner(), newOwner);
-        
-        chainvoice.cancelOwnershipTransfer();
-        assertEq(chainvoice.pendingOwner(), address(0));
-    }
-
-    function testCancelOwnershipTransferNoPending() public {
-        vm.expectRevert(Chainvoice.OwnershipNotPending.selector);
-        chainvoice.cancelOwnershipTransfer();
-    }
-
-    function testFeeUpdateEvent() public {
+    function testSetFeeAmount_ByFeeAddress() public {
         uint256 newFee = 0.001 ether;
+        vm.expectEmit(true, true, false, false);
+        emit FeeUpdated(INITIAL_FEE, newFee);
+        vm.prank(feeAddr);
         chainvoice.setFeeAmount(newFee);
         assertEq(chainvoice.fee(), newFee);
     }
 
-    function testTreasuryAddressUpdateEvent() public {
-        address newTreasury = address(0xdead);
-        chainvoice.setTreasuryAddress(newTreasury);
-        assertEq(chainvoice.treasuryAddress(), newTreasury);
+    function testSetFeeAddress_ByFeeAddress() public {
+        address newFeeAddr = address(0xdead);
+        vm.expectEmit(true, true, false, false);
+        emit FeeAddressUpdated(feeAddr, newFeeAddr);
+        vm.prank(feeAddr);
+        chainvoice.setFeeAddress(newFeeAddr);
+        assertEq(chainvoice.feeAddress(), newFeeAddr);
+    }
+
+    function testSetFeeAddress_PreviousAddressLosesControl() public {
+        address newFeeAddr = address(0xdead);
+        vm.prank(feeAddr);
+        chainvoice.setFeeAddress(newFeeAddr);
+
+        vm.prank(feeAddr);
+        vm.expectRevert(Chainvoice.Unauthorized.selector);
+        chainvoice.setFeeAmount(1);
+
+        vm.prank(newFeeAddr);
+        chainvoice.setFeeAmount(1);
+        assertEq(chainvoice.fee(), 1);
+    }
+
+    function testFeeAdmin_DeployerHasNoSpecialRole() public {
+        // address(this) deployed the contract in setUp but is not the fee address.
+        vm.expectRevert(Chainvoice.Unauthorized.selector);
+        chainvoice.setFeeAmount(1);
+        vm.expectRevert(Chainvoice.Unauthorized.selector);
+        chainvoice.setFeeAddress(alice);
     }
 
     /* ------------------------------------------------------------ */
@@ -1457,31 +1485,86 @@ contract ChainvoiceTest is Test {
         chainvoice.payInvoicesBatch{value: 1 ether + fee * 2}(ids);
     }
 
-    function testWithdrawFees_RevertIfTreasuryNotSet() public {
-        vm.expectRevert(Chainvoice.TreasuryNotSet.selector);
-        chainvoice.withdrawFees();
-    }
-
     function testWithdrawFees_RevertIfNoFees() public {
-        chainvoice.setTreasuryAddress(address(0x999));
         vm.expectRevert(Chainvoice.NoFeesAvailable.selector);
         chainvoice.withdrawFees();
     }
 
-    function testSetFeeAmount_RevertIfNotOwner() public {
+    function testSetFeeAmount_RevertIfNotFeeAddress() public {
         vm.expectRevert(Chainvoice.Unauthorized.selector);
         vm.prank(alice);
         chainvoice.setFeeAmount(0);
     }
 
-    function testSetTreasuryAddress_RevertIfNotOwner() public {
+    function testSetFeeAddress_RevertIfNotFeeAddress() public {
         vm.expectRevert(Chainvoice.Unauthorized.selector);
         vm.prank(alice);
-        chainvoice.setTreasuryAddress(alice);
+        chainvoice.setFeeAddress(alice);
     }
 
-    function testSetTreasuryAddress_RevertIfZero() public {
+    function testSetFeeAddress_RevertIfZero() public {
         vm.expectRevert(Chainvoice.ZeroAddress.selector);
-        chainvoice.setTreasuryAddress(address(0));
+        vm.prank(feeAddr);
+        chainvoice.setFeeAddress(address(0));
+    }
+
+    /* ------------------------------------------------------------ */
+    /*                  FEE CHARGED ON PAYMENT PATHS                 */
+    /* ------------------------------------------------------------ */
+
+    function testPayInvoice_ChargesConfiguredFee() public {
+        vm.prank(feeAddr);
+        chainvoice.setFeeAmount(0.01 ether);
+
+        vm.prank(alice);
+        chainvoice.createInvoice(bob, 1 ether, address(0), keccak256("fee-single"));
+
+        uint256 aliceBefore = alice.balance;
+        vm.prank(bob);
+        chainvoice.payInvoice{value: 1 ether + 0.01 ether}(0);
+
+        assertEq(alice.balance - aliceBefore, 1 ether);
+        assertEq(chainvoice.accumulatedFees(), 0.01 ether);
+
+        chainvoice.withdrawFees();
+        assertEq(feeAddr.balance, 0.01 ether);
+    }
+
+    function testPayInvoice_RevertIfStaleFee() public {
+        vm.prank(alice);
+        chainvoice.createInvoice(bob, 1 ether, address(0), keccak256("fee-stale"));
+        vm.prank(feeAddr);
+        chainvoice.setFeeAmount(0.01 ether);
+
+        vm.prank(bob);
+        vm.expectRevert(Chainvoice.IncorrectPaymentAmount.selector);
+        chainvoice.payInvoice{value: 1 ether + INITIAL_FEE}(0);
+    }
+
+    function testPayInvoicesBatch_ChargesFeePerInvoice() public {
+        vm.startPrank(alice);
+        chainvoice.createInvoice(bob, 1 ether, address(0), keccak256("b1"));
+        chainvoice.createInvoice(bob, 2 ether, address(0), keccak256("b2"));
+        vm.stopPrank();
+
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = 0;
+        ids[1] = 1;
+
+        vm.prank(bob);
+        chainvoice.payInvoicesBatch{value: 3 ether + 2 * INITIAL_FEE}(ids);
+
+        assertEq(chainvoice.accumulatedFees(), 2 * INITIAL_FEE);
+        chainvoice.withdrawFees();
+        assertEq(feeAddr.balance, 2 * INITIAL_FEE);
+    }
+
+    function testPayInvoice_ZeroFeeDeployment() public {
+        Chainvoice free = new Chainvoice(0, feeAddr);
+        vm.prank(alice);
+        free.createInvoice(bob, 1 ether, address(0), keccak256("free"));
+        vm.prank(bob);
+        free.payInvoice{value: 1 ether}(0);
+        assertEq(free.accumulatedFees(), 0);
     }
 }

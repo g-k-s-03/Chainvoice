@@ -150,8 +150,10 @@ forge build
 source .env
 
 4. **Deploy to Ethereum Classic**  
-The script deploys the contract and, if `TREASURY_ADDRESS` / `FEE_WEI` are set,
-applies them in the same broadcast. The compiler targets `evm_version = "london"`
+The script deploys the contract with `FEE_ADDRESS` (required) and `FEE_WEI`
+(optional, default `0.0005 ether`) passed to the constructor. There is no owner:
+the fee address receives withdrawn fees and is the only account that can change
+the fee or hand the role to another address. The compiler targets `evm_version = "london"`
 (see `contracts/foundry.toml`) so the same bytecode runs on Sepolia and ETC.
 
 ```bash
@@ -187,6 +189,14 @@ VITE_CONTRACT_ADDRESS_137=
 VITE_WALLETCONNECT_PROJECT_ID=Your Project ID can be obtained from https://dashboard.reown.com/ 
 ```
 
+> ⚠️ **Redeploy needed.** Removing contract ownership in favour of a fee address
+> changed the constructor (`constructor(uint256 _fee, address _feeAddress)`) and the
+> ABI (`owner`/`treasuryAddress` and the ownership-transfer functions are gone;
+> `feeAddress` and `setFeeAddress` replace them). Contracts deployed from an earlier
+> revision, including the Sepolia address above, do not match the current ABI, so
+> every network must be redeployed and `VITE_CONTRACT_ADDRESS_<chainId>` updated
+> before the Treasury page (`/treasure`) will work. See [Deployments.md](./Deployments.md).
+>
 > ⚠️ Renaming the key registry functions changed their selectors, so only a
 > contract deployed from the current `contracts/src/Chainvoice.sol` will answer.
 > The Sepolia address above is such a deployment — see

@@ -23,7 +23,7 @@ const Treasure = () => {
   const [treasureAmount, setTreasureAmount] = useState(0);
   const [fee, setFee] = useState(0);
   const { data: walletClient } = useWalletClient();
-  const { chainId } = useAccount();
+  const { chainId, address: account } = useAccount();
   const [loading, setLoading] = useState({
     fetch: false,
     setAddress: false,
@@ -32,6 +32,11 @@ const Treasure = () => {
   });
   const [treasuryAddress, setTreasuryAddress] = useState("");
   const [newTreasuryAddress, setNewTreasuryAddress] = useState("");
+  // Fee settings are controlled by the contract's fee address, not an owner.
+  const isTreasury =
+    !!account &&
+    !!treasuryAddress &&
+    account.toLowerCase() === treasuryAddress.toLowerCase();
   const [newFee, setNewFee] = useState("");
 
   useEffect(() => {
@@ -55,7 +60,7 @@ const Treasure = () => {
         const contract = new Contract(contractAddress, ChainvoiceABI, signer);
         const [amt, add, feeAmt] = await Promise.all([
           contract.accumulatedFees(),
-          contract.treasuryAddress(),
+          contract.feeAddress(),
           contract.fee(),
         ]);
         setTreasureAmount(ethers.formatUnits(amt));
@@ -72,6 +77,10 @@ const Treasure = () => {
   }, [walletClient, chainId]);
 
   const handleSetTreasuryAddress = async () => {
+    if (!isTreasury) {
+      toast.error("Only the treasury address can update this setting");
+      return;
+    }
     if (!ethers.isAddress(newTreasuryAddress)) {
       toast.error("Please enter a valid Ethereum address");
       return;
@@ -93,7 +102,7 @@ const Treasure = () => {
       }
 
       const contract = new Contract(contractAddress, ChainvoiceABI, signer);
-      const tx = await contract.setTreasuryAddress(newTreasuryAddress);
+      const tx = await contract.setFeeAddress(newTreasuryAddress);
       await tx.wait();
       setTreasuryAddress(newTreasuryAddress);
       setNewTreasuryAddress("");
@@ -138,6 +147,10 @@ const Treasure = () => {
   };
 
   const handleUpdateFee = async () => {
+    if (!isTreasury) {
+      toast.error("Only the treasury address can update the fee");
+      return;
+    }
     if (!newFee || isNaN(newFee)) {
       toast.error("Please enter a valid fee amount");
       return;
@@ -233,7 +246,11 @@ const Treasure = () => {
 
                   <div className="flex items-center p-4 bg-gray-800/40 rounded-xl border border-gray-700/50 backdrop-blur-sm">
                     <Key className="h-5 w-5 text-gray-300 mr-3" />
-                    <span className="text-gray-300">Admin Access Only</span>
+                    <span className="text-gray-300">
+                      {isTreasury
+                        ? "Connected as treasury address"
+                        : "Treasury Address Access Only"}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -286,7 +303,7 @@ const Treasure = () => {
               />
               <Button
                 onClick={handleSetTreasuryAddress}
-                disabled={loading.setAddress || !newTreasuryAddress}
+                disabled={loading.setAddress || !newTreasuryAddress || !isTreasury}
                 className="w-full bg-green-600 hover:bg-green-700 h-11"
               >
                 {loading.setAddress ? (
@@ -298,7 +315,7 @@ const Treasure = () => {
                 )}
               </Button>
               <p className="text-xs text-gray-500 mt-1">
-                Requires contract owner privileges
+                Only the current treasury address can do this. Updating it also transfers control of the fee settings.
               </p>
             </div>
           </div>
@@ -321,7 +338,7 @@ const Treasure = () => {
               />
               <Button
                 onClick={handleUpdateFee}
-                disabled={loading.feeUpdate || !newFee}
+                disabled={loading.feeUpdate || !newFee || !isTreasury}
                 className="w-full bg-green-600 hover:bg-green-700 h-11"
               >
                 {loading.feeUpdate ? (
